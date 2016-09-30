@@ -1,0 +1,156 @@
+
+(add-ns p (git-dependency "github.com:jduey/parser.git" "parser.toc"))
+(add-ns sm (git-dependency "github.com:jduey/state-maybe.git" "state-maybe.toc"))
+(add-ns fr (git-dependency "github.com:jduey/free.git" "free.toc"))
+
+(defprotocol RecursiveDescent
+  (recursive-descent [_]))
+
+(extend-type Function
+  RecursiveDescent
+  (recursive-descent [f]
+    (sm/state-maybe (fn [& args]
+                      (list (apply f (map (remove args list-empty?)
+                                          (fn [[x]] x))))))))
+
+(extend-type p/get-filename
+  RecursiveDescent
+  (recursive-descent [_]
+    (sm/new-sm (fn [s]
+                 (map (get s :file-name)
+                      (fn [file-name]
+                        (list (list file-name) s)))))))
+
+(extend-type p/get-linenumber
+  RecursiveDescent
+  (recursive-descent [_]
+    (sm/new-sm (fn [s]
+                 (map (get s :line-num)
+                      (fn [line-num ]
+                        (list (list line-num) s)))))))
+
+(extend-type p/inc-linenumber
+  RecursiveDescent
+  (recursive-descent [_]
+    (sm/new-sm (fn [s]
+                 (maybe (list (list s) (update-in s (list :line-num) inc)))))))
+
+(defn next-input-buffer [s]
+  (for [input (get s :input)
+        new-text (first input)]
+    (comp s {:text new-text
+             :input ((empty? new-text) empty-list (rest input))})))
+
+(defn reader [n s]
+  (let [text (get* s :text "" (sha1 :text) 0)
+        text-length (count text)]
+    (or (and (< n text-length)
+             (maybe (list (subs text 0 n)
+                          (assoc s :text (subs text n)))))
+        (and (= n text-length)
+             (or (map (next-input-buffer s)
+                      (fn [new-s]
+                        (list text new-s)))
+                 (maybe (list text (assoc s :text "")))))
+        ;; (< text-length n)
+        (for [new-s (next-input-buffer s)
+              [texts final-s] (reader (- n text-length) new-s)]
+          (list (comp text texts) final-s)))))
+
+(defn fn-reader [f s]
+  (flat-map (get s :text)
+            (fn [text]
+              (let [length (f text)]
+                ((= 0 length)
+                 nothing
+                 (or (and (= length (count text))
+                          (for [new-s (next-input-buffer s)
+                                [tail final-s] (fn-reader f new-s)]
+                            (list (cons text tail) final-s)))
+                     (maybe (list (list (subs text 0 length))
+                                  (assoc s :text (subs text length))))))))))
+
+(extend-type p/parser-not-char
+  RecursiveDescent
+  (recursive-descent [p]
+    (sm/new-sm (fn [s]
+                 (for [[c new-s] (reader 1 s)
+                       :when-not (= (.test-c p) c)]
+                   (list (list c) new-s))))))
+
+(extend-type p/parser-char-range
+  RecursiveDescent
+  (recursive-descent [p]
+    (sm/new-sm (fn [s]
+                 (for [[c new-s] (reader 1 s)
+                       :when (< (dec (char-code (.lower p)))
+                                (char-code c)
+                                (inc (char-code (.higher p))))]
+                   (list (list c) new-s))))))
+
+(extend-type p/parser-terminal
+  RecursiveDescent
+  (recursive-descent [p]
+    (let [term-str (.term-str p)
+          term-count (count term-str)
+          return-value (list term-str)]
+      (sm/new-sm (fn [s]
+                   (for [[text new-s] (reader term-count s)
+                         :when (= text term-str)]
+                     (list return-value new-s)))))))
+
+(extend-type p/parser-term-fn
+  RecursiveDescent
+  (recursive-descent [p]
+    (sm/new-sm (fn [s]
+                 (fn-reader (.f p) s)))))
+
+(extend-type p/repeat-rule
+  RecursiveDescent
+  (recursive-descent [p]
+    (let [rule (fr/evaluate (.rule p) recursive-descent)]
+      (flat-map (sm/recur rule)
+                (fn [[head & tail]]
+                  (sm/state-maybe (list (comp* head tail))))))))
+
+(extend-type p/ignore-rule
+  RecursiveDescent
+  (recursive-descent [p]
+    (flat-map (fr/evaluate (.rule p) recursive-descent)
+              (fn [_]
+                (sm/state-maybe empty-list)))))
+
+(extend-type p/parser-always
+  RecursiveDescent
+  (recursive-descent [p]
+    (sm/state-maybe (list (.v p)))))
+
+(extend-type p/optional-rule
+  RecursiveDescent
+  (recursive-descent [p]
+    (comp (fr/evaluate (.rule p) recursive-descent)
+          (recursive-descent (p/parser-always empty-list)))))
+
+(extend-type p/none-or-more-rule
+  RecursiveDescent
+  (recursive-descent [p]
+    (comp (recursive-descent (p/repeat-rule (.rule p)))
+          (recursive-descent (p/parser-always empty-list)))))
+
+(extend-type p/parser-rule
+  RecursiveDescent
+  (recursive-descent [p]
+    (fr/evaluate (.grammar p) recursive-descent)))
+
+(extend-type p/recursive-parser-rule
+  RecursiveDescent
+  (recursive-descent [p]
+    (let [parser (fr/evaluate (.grammar p) recursive-descent)
+          parser (sm/new-sm (fn [s] (parser s)))]
+      (flat-map (sm/assoc-in-val (list :parser-fns (.name p)) parser)
+                (fn [_] parser)))))
+
+(extend-type p/recursion-rule
+  RecursiveDescent
+  (recursive-descent [p]
+    (flatten (sm/get-in-val (list :parser-fns (.rule-name p))))))
