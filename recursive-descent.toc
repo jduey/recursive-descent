@@ -6,34 +6,36 @@
 (defprotocol RecursiveDescent
   (recursive-descent [_]))
 
+(defprotocol Ignored
+  (ignore? [_] nothing))
+
 (extend-type Function
   RecursiveDescent
   (recursive-descent [f]
     (sm/state-maybe (fn [& args]
-                      (list (apply f (map (remove args list-empty?)
-                                          (fn [[x]] x))))))))
+                      (apply f (remove args ignore?))))))
 
 (extend-type p/get-filename
   RecursiveDescent
   (recursive-descent [_]
     (sm/new-sm (fn [s]
-                 (map (get s :file-name)
+                 (map (or (get s :file-name) (maybe ""))
                       (fn [file-name]
-                        (list (list file-name) s)))))))
+                        (list file-name s)))))))
 
 (extend-type p/get-linenumber
   RecursiveDescent
   (recursive-descent [_]
     (sm/new-sm (fn [s]
-                 (map (get s :line-num)
+                 (map (or (get s :line-num) (maybe 0))
                       (fn [line-num ]
-                        (list (list line-num) s)))))))
+                        (list line-num s)))))))
 
 (extend-type p/inc-linenumber
   RecursiveDescent
   (recursive-descent [_]
     (sm/new-sm (fn [s]
-                 (maybe (list (list s) (update-in s (list :line-num) inc)))))))
+                 (maybe (list s (update-in s (list :line-num) inc)))))))
 
 (defn next-input-buffer [s]
   (for [input (get s :input)
@@ -76,7 +78,7 @@
     (sm/new-sm (fn [s]
                  (for [[c new-s] (reader 1 s)
                        :when-not (= (.test-c p) c)]
-                   (list (list c) new-s))))))
+                   (list c new-s))))))
 
 (extend-type p/parser-char-range
   RecursiveDescent
@@ -86,24 +88,25 @@
                        :when (< (dec (char-code (.lower p)))
                                 (char-code c)
                                 (inc (char-code (.higher p))))]
-                   (list (list c) new-s))))))
+                   (list c new-s))))))
 
 (extend-type p/parser-terminal
   RecursiveDescent
   (recursive-descent [p]
     (let [term-str (.term-str p)
-          term-count (count term-str)
-          return-value (list term-str)]
+          term-count (count term-str)]
       (sm/new-sm (fn [s]
                    (for [[text new-s] (reader term-count s)
                          :when (= text term-str)]
-                     (list return-value new-s)))))))
+                     (list term-str new-s)))))))
 
 (extend-type p/parser-term-fn
   RecursiveDescent
   (recursive-descent [p]
     (sm/new-sm (fn [s]
-                 (fn-reader (.f p) s)))))
+                 (map (fn-reader (.f p) s)
+                      (fn [[str-list new-s]]
+                        (list (list-to-str str-list) new-s)))))))
 
 (extend-type p/repeat-rule
   RecursiveDescent
@@ -111,19 +114,21 @@
     (let [rule (fr/evaluate (.rule p) recursive-descent)]
       (flat-map (sm/recur rule)
                 (fn [[head & tail]]
-                  (sm/state-maybe (list (comp* head tail))))))))
+                  (sm/state-maybe (cons head tail)))))))
 
 (extend-type p/ignore-rule
   RecursiveDescent
   (recursive-descent [p]
     (flat-map (fr/evaluate (.rule p) recursive-descent)
               (fn [_]
-                (sm/state-maybe empty-list)))))
+                (sm/state-maybe (reify
+                                  Ignored
+                                  (ignore? [_] (maybe 'ignore))))))))
 
 (extend-type p/parser-always
   RecursiveDescent
   (recursive-descent [p]
-    (sm/state-maybe (list (.v p)))))
+    (sm/state-maybe (.v p))))
 
 (extend-type p/optional-rule
   RecursiveDescent
