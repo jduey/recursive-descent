@@ -90,6 +90,15 @@
                                 (inc (char-code (.higher p))))]
                    (list c new-s))))))
 
+;; (extend-type String
+;;   RecursiveDescent
+;;   (recursive-descent [p]
+;;     (let [term-count (count p)]
+;;       (sm/new-sm (fn [s]
+;;                    (for [[text new-s] (reader term-count s)
+;;                          :when (= text p)]
+;;                      (list p new-s)))))))
+
 (extend-type p/parser-terminal
   RecursiveDescent
   (recursive-descent [p]
@@ -111,17 +120,25 @@
 (extend-type p/repeat-rule
   RecursiveDescent
   (recursive-descent [p]
-    (let [rule (fr/evaluate (.rule p) recursive-descent)]
-      (flat-map (sm/recur rule)
-                (fn [[head & tail]]
-                  (sm/state-maybe (cons head tail)))))))
+    (flat-map (sm/recur (.rule p))
+              (fn [[head & tail]]
+                (sm/state-maybe (cons head tail))))))
+
+(extend-type p/none-or-more-rule
+  RecursiveDescent
+  (recursive-descent [p]
+    (comp (recursive-descent (p/repeat-rule (.rule p)))
+          (recursive-descent (p/parser-always empty-list)))))
 
 (extend-type p/ignore-rule
   RecursiveDescent
   (recursive-descent [p]
-    (flat-map (fr/evaluate (.rule p) recursive-descent)
+    (flat-map (.rule p)
               (fn [_]
                 (sm/state-maybe (reify
+                                  Stringable
+                                  (string-list [_] (list "<Ignored>"))
+
                                   Ignored
                                   (ignore? [_] (maybe 'ignore))))))))
 
@@ -130,27 +147,15 @@
   (recursive-descent [p]
     (sm/state-maybe (.v p))))
 
-(extend-type p/optional-rule
-  RecursiveDescent
-  (recursive-descent [p]
-    (comp (fr/evaluate (.rule p) recursive-descent)
-          (recursive-descent (p/parser-always empty-list)))))
-
-(extend-type p/none-or-more-rule
-  RecursiveDescent
-  (recursive-descent [p]
-    (comp (recursive-descent (p/repeat-rule (.rule p)))
-          (recursive-descent (p/parser-always empty-list)))))
-
 (extend-type p/parser-rule
   RecursiveDescent
   (recursive-descent [p]
-    (fr/evaluate (.grammar p) recursive-descent)))
+    (.grammar p)))
 
 (extend-type p/recursive-parser-rule
   RecursiveDescent
   (recursive-descent [p]
-    (let [parser (fr/evaluate (.grammar p) recursive-descent)
+    (let [parser (.grammar p)
           parser (sm/new-sm (fn [s] (parser s)))]
       (flat-map (sm/assoc-in-val (list :parser-fns (.name p)) parser)
                 (fn [_] parser)))))
@@ -159,3 +164,16 @@
   RecursiveDescent
   (recursive-descent [p]
     (flatten (sm/get-in-val (list :parser-fns (.rule-name p))))))
+
+(extend-type p/Union
+  RecursiveDescent
+  (recursive-descent [u]
+    (apply comp (.rules u))))
+
+(extend-type p/Cat
+  RecursiveDescent
+  (recursive-descent [u]
+    (apply* (recursive-descent list) (.rules u))))
+
+(defn parser [grammar]
+  (fr/evaluate grammar recursive-descent))
