@@ -109,13 +109,34 @@
                          :when (= text term-str)]
                      [term-str new-s]))))))
 
+
+(defn count-newlines [s]
+  (inline-text Number "
+int newlines = 0;
+char *buffer = NULL;
+if (arg0->type == SubStringType)
+  buffer = ((SubString *)arg0)->buffer;
+else if (arg0->type == StringType)
+  buffer = ((String *)arg0)->buffer;
+else
+  abort();
+for (int i = 0; i < ((String *)arg0)->len; i++) {
+  if (buffer[i] == (char)10)
+    newlines++;
+}
+return(numberValue(newlines));
+"))
+
 (extend-type p/parser-term-fn
   RecursiveDescent
   (recursive-descent [p]
     (sm/new-sm (fn [s]
                  (map (fn-reader (.f p) s)
                       (fn [[str-list new-s]]
-                        [(to-str str-list) new-s]))))))
+                        (let [line-count (reduce str-list 0 (fn [line-count s]
+                                                              (+ line-count (count-newlines s))))]
+                          [(to-str str-list)
+                           (update-in new-s [:line-num] (partial + line-count))])))))))
 
 (extend-type p/repeat-rule
   RecursiveDescent
