@@ -35,7 +35,9 @@
   RecursiveDescent
   (recursive-descent [_]
     (sm/new-sm (fn [s]
-                 (maybe [s (update-in s [:line-num] inc)])))))
+                 (map (update-in s [:line-num] inc)
+                      (fn [new-s]
+                        [s new-s]))))))
 
 (defn next-input-buffer [s]
   (for [input (get s :input)
@@ -131,12 +133,11 @@ return(numberValue(newlines));
   RecursiveDescent
   (recursive-descent [p]
     (sm/new-sm (fn [s]
-                 (map (fn-reader (.f p) s)
-                      (fn [[str-list new-s]]
-                        (let [line-count (reduce str-list 0 (fn [line-count s]
-                                                              (+ line-count (count-newlines s))))]
-                          [(to-str str-list)
-                           (update-in new-s [:line-num] (partial + line-count))])))))))
+                 (for [[str-list new-s] (fn-reader (.f p) s)
+                       :let [line-count (reduce str-list 0 (fn [line-count s]
+                                                             (+ line-count (count-newlines s))))]
+                       new-s (update-in new-s [:line-num] (partial + line-count))]
+                   [(to-str str-list) new-s])))))
 
 (extend-type p/repeat-rule
   RecursiveDescent
