@@ -113,7 +113,7 @@
 
 
 (defn count-newlines [s]
-  (inline-text Number "
+  (inline-C Number "
 int newlines = 0;
 char *buffer = NULL;
 if (arg0->type == SubStringType)
