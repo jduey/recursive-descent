@@ -126,8 +126,16 @@ for (int i = 0; i < ((String *)arg0)->len; i++) {
   if (buffer[i] == (char)10)
     newlines++;
 }
+dec_and_free(arg0, 1);
 return(numberValue(newlines));
-"))
+")
+  ;; TODO: for when String reduce is fast
+  ;; (extract (reduce s (maybe 0)
+  ;;                  (fn [line-count c]
+  ;;                    (or (and (= c "\n")
+  ;;                             (map line-count inc))
+  ;;                        line-count))))
+  )
 
 (extend-type p/parser-term-fn
   RecursiveDescent
@@ -199,3 +207,8 @@ return(numberValue(newlines));
 
 (defn parser [grammar]
   (fr/evaluate grammar recursive-descent))
+
+(defn parse-file [parser file-name input-stream]
+  (parser {:line-num 1
+           :file-name file-name
+           :input (cache input-stream)}))
