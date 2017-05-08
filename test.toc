@@ -1,0 +1,13 @@
+
+(add-ns rd (module "recursive-descent.toc"))
+(add-ns p (git-dependency "github.com:jduey/parser.git" "parser.toc"))
+
+(def octet (p/char-range (char 0) (char 255)))
+
+(main [_]
+      (let [op (rd/parser octet)]
+        (or (= (maybe ["a" {:text "bc" :input empty-list}])
+               (op {:input (list "abc")}))
+            (let [_ (print-err 'FAIL)]
+              (abort))))
+      )
